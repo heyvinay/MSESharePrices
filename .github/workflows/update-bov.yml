@@ -1,12 +1,17 @@
 name: Update BOV quote feed
 
-# Re-pushed as a follow-up commit to force GitHub Actions to index this
-# workflow (it wasn't registered when first added in the repo's initial commit).
 on:
   schedule:
     # Daily, well after MSE's end-of-day publication. Times are UTC.
     - cron: "0 18 * * 1-5"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      manual_urls:
+        description: >
+          Optional space-separated MSE workbook URLs to bypass archive-page
+          discovery (see docs/qa.md manual verification checklist).
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -30,7 +35,16 @@ jobs:
         run: pytest tests/
 
       - name: Generate BOV feed
-        run: python src/mse_pp_feed.py --symbol BOV --output-json docs/json/BOV.json
+        env:
+          MANUAL_URLS: ${{ github.event.inputs.manual_urls }}
+        run: |
+          ARGS=()
+          if [ -n "$MANUAL_URLS" ]; then
+            for url in $MANUAL_URLS; do
+              ARGS+=(--manual-url "$url")
+            done
+          fi
+          python src/mse_pp_feed.py --symbol BOV --output-json docs/json/BOV.json "${ARGS[@]}"
 
       - name: Commit updated feed if changed
         run: |
