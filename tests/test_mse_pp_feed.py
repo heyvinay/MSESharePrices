@@ -3,6 +3,7 @@ import json
 import shutil
 import subprocess
 import tempfile
+import zipfile
 from pathlib import Path
 
 import pandas as pd
@@ -14,6 +15,15 @@ import mse_pp_feed as feed
 def make_workbook_bytes(df: pd.DataFrame) -> bytes:
     buf = io.BytesIO()
     df.to_excel(buf, index=False, engine="openpyxl")
+    return buf.getvalue()
+
+
+def make_zip_bytes(members: dict) -> bytes:
+    """members: {filename: bytes}."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for name, content in members.items():
+            zf.writestr(name, content)
     return buf.getvalue()
 
 
@@ -289,6 +299,74 @@ def test_convert_xls_to_xlsx_via_libreoffice_real_roundtrip():
 
     assert roundtripped.iloc[0]["Symbol code"] == "BOV"
     assert roundtripped.iloc[0]["Close Price"] == 1.92
+
+
+# ---- zip archive handling (e.g. MSE's yearly archive .zip) -------------------
+
+def _bov_workbook_bytes(dates_and_closes):
+    df = pd.DataFrame({
+        "Symbol code": ["BOV"] * len(dates_and_closes),
+        "DATE": [d for d, _ in dates_and_closes],
+        "Close Price": [c for _, c in dates_and_closes],
+    })
+    return make_workbook_bytes(df)
+
+
+def test_process_workbook_extracts_single_workbook_from_wrapper_zip():
+    inner = _bov_workbook_bytes([("05-Jan-2026", 1.92), ("06-Jan-2026", 1.91)])
+    zip_bytes = make_zip_bytes({"Trading Statistics 2026.xls": inner})
+
+    result = feed.process_workbook(zip_bytes, "BOV")
+    final = feed.dedupe_and_sort(result.quotes)
+
+    assert final == [
+        {"date": "2026-01-05", "close": 1.92},
+        {"date": "2026-01-06", "close": 1.91},
+    ]
+
+
+def test_process_workbook_ignores_non_workbook_members_in_zip():
+    inner = _bov_workbook_bytes([("05-Jan-2026", 1.92)])
+    zip_bytes = make_zip_bytes({
+        "readme.txt": b"not a workbook",
+        "Trading Statistics 2026.xls": inner,
+        "logo.png": b"\x89PNG\r\n\x1a\n",
+    })
+
+    result = feed.process_workbook(zip_bytes, "BOV")
+
+    assert result.quotes == [{"date": "2026-01-05", "close": 1.92}]
+
+
+def test_process_workbook_merges_multiple_workbook_members_in_zip():
+    inner_a = _bov_workbook_bytes([("05-Jan-2026", 1.92)])
+    inner_b = _bov_workbook_bytes([("06-Jan-2026", 1.91)])
+    zip_bytes = make_zip_bytes({
+        "Jan-Week1.xls": inner_a,
+        "Jan-Week2.xls": inner_b,
+    })
+
+    result = feed.process_workbook(zip_bytes, "BOV")
+    final = feed.dedupe_and_sort(result.quotes)
+
+    assert final == [
+        {"date": "2026-01-05", "close": 1.92},
+        {"date": "2026-01-06", "close": 1.91},
+    ]
+
+
+def test_process_workbook_raises_clearly_when_zip_has_no_workbook_members():
+    zip_bytes = make_zip_bytes({"readme.txt": b"nothing useful here"})
+    with pytest.raises(feed.WorkbookConversionError, match="no .xls/.xlsx"):
+        feed.process_workbook(zip_bytes, "BOV")
+
+
+def test_is_xlsx_zip_distinguishes_a_real_xlsx_from_a_wrapper_zip():
+    real_xlsx = make_workbook_bytes(pd.DataFrame({"a": [1]}))
+    wrapper_zip = make_zip_bytes({"readme.txt": b"hello"})
+
+    assert feed._is_xlsx_zip(real_xlsx) is True
+    assert feed._is_xlsx_zip(wrapper_zip) is False
 
 
 # ---- discover_urls -----------------------------------------------------------

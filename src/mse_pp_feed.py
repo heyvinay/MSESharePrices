@@ -22,6 +22,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import zipfile
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -208,7 +209,6 @@ def read_workbook(data: bytes) -> pd.DataFrame:
             print(f"DEBUG: converted.xlsx is {len(xlsx_data)} bytes, "
                   f"starts with {xlsx_data[:4]!r} (zip magic is b'PK\\x03\\x04')", file=sys.stderr)
             if xlsx_data[:2] == b"PK":
-                import zipfile
                 with zipfile.ZipFile(io.BytesIO(xlsx_data)) as zf:
                     print(f"DEBUG: converted.xlsx zip contents: {zf.namelist()}", file=sys.stderr)
             excel_file = pd.ExcelFile(io.BytesIO(xlsx_data), engine="openpyxl")
@@ -288,7 +288,39 @@ def write_csv(quotes: list[dict], path: Path) -> None:
             writer.writerow([quote["date"], quote["close"]])
 
 
+ZIP_MAGIC = b"PK\x03\x04"
+
+
+def _is_xlsx_zip(data: bytes) -> bool:
+    """True if this zip IS an xlsx workbook itself, rather than a wrapper archive."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            return "xl/workbook.xml" in zf.namelist()
+    except zipfile.BadZipFile:
+        return False
+
+
+def _extract_workbook_members(data: bytes) -> list[bytes]:
+    """Pull .xls/.xlsx member files out of a wrapper zip archive (e.g. MSE's
+    yearly archive .zip, which contains a workbook rather than being one)."""
+    members = []
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        for name in zf.namelist():
+            if name.lower().endswith((".xls", ".xlsx")):
+                members.append(zf.read(name))
+    return members
+
+
 def process_workbook(data: bytes, symbol: str) -> ExtractResult:
+    if data[:4] == ZIP_MAGIC and not _is_xlsx_zip(data):
+        members = _extract_workbook_members(data)
+        if not members:
+            raise WorkbookConversionError("Zip archive contained no .xls/.xlsx workbook member")
+        results = [process_workbook(member, symbol) for member in members]
+        return ExtractResult(
+            quotes=[q for r in results for q in r.quotes],
+            rows_dropped_invalid=sum(r.rows_dropped_invalid for r in results),
+        )
     df = read_workbook(data)
     df = normalise_headers(df)
     return extract_quotes(df, symbol)
