@@ -143,7 +143,7 @@ def convert_xls_to_xlsx_via_libreoffice(data: bytes) -> bytes:
         return converted.read_bytes()
 
 
-HEADER_SCAN_MAX_ROWS = 15
+HEADER_SCAN_MAX_ROWS = 100
 
 
 def _looks_like_header_row(values: list) -> bool:
@@ -169,9 +169,12 @@ def _promote_header_row(raw_df: pd.DataFrame) -> pd.DataFrame:
             promoted.reset_index(drop=True, inplace=True)
             return promoted
 
-    print(f"DEBUG: no header row found in first {limit} rows; dumping for diagnosis:", file=sys.stderr)
-    for row_idx in range(limit):
-        print(f"DEBUG: row {row_idx}: {raw_df.iloc[row_idx].tolist()!r}", file=sys.stderr)
+    dump_limit = min(20, limit)
+    print(f"DEBUG: no header row found in first {limit} rows; dumping first {dump_limit} for diagnosis:",
+          file=sys.stderr)
+    for row_idx in range(dump_limit):
+        row_repr = repr(raw_df.iloc[row_idx].tolist())
+        print(f"DEBUG: row {row_idx}: {row_repr[:500]}", file=sys.stderr)
     return raw_df
 
 
