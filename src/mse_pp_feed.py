@@ -93,6 +93,11 @@ def download_file(url: str) -> bytes:
     """Download a single file (workbook or the archive page) and return raw bytes."""
     response = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=REQUEST_TIMEOUT_SECONDS)
     response.raise_for_status()
+    print(
+        f"INFO: downloaded {url} -> {len(response.content)} bytes, "
+        f"Content-Type: {response.headers.get('Content-Type')}",
+        file=sys.stderr,
+    )
     return response.content
 
 
@@ -206,11 +211,22 @@ def run(
     for url in urls:
         try:
             data = download_file(url) if url.startswith("http") else Path(url).read_bytes()
+        except Exception as exc:  # noqa: BLE001 - one bad year shouldn't abort the whole run
+            stats.files_failed += 1
+            stats.failures.append(f"{url}: {exc}")
+            print(f"WARNING: failed to download {url}: {exc}", file=sys.stderr)
+            continue
+
+        try:
             result = process_workbook(data, symbol)
         except Exception as exc:  # noqa: BLE001 - one bad year shouldn't abort the whole run
             stats.files_failed += 1
             stats.failures.append(f"{url}: {exc}")
-            print(f"WARNING: failed to process {url}: {exc}", file=sys.stderr)
+            print(
+                f"WARNING: failed to process {url}: {exc} "
+                f"(downloaded {len(data)} bytes, first 16 bytes: {data[:16].hex()})",
+                file=sys.stderr,
+            )
             continue
         stats.files_processed += 1
         stats.rows_matched += len(result.quotes)
