@@ -217,9 +217,14 @@ def read_workbook(data: bytes) -> pd.DataFrame:
                     for sheet_xml_name in ("xl/worksheets/sheet1.xml",):
                         if sheet_xml_name in zf.namelist():
                             raw_xml = zf.read(sheet_xml_name)
-                            print(f"DEBUG: {sheet_xml_name} is {len(raw_xml)} bytes; "
-                                  f"first 3000 chars:\n{raw_xml[:3000].decode('utf-8', errors='replace')}",
-                                  file=sys.stderr)
+                            text = raw_xml.decode("utf-8", errors="replace")
+                            print(f"DEBUG: {sheet_xml_name} is {len(raw_xml)} bytes", file=sys.stderr)
+                            row17_pos = text.find('r="17"')
+                            if row17_pos == -1:
+                                row17_pos = text.find("<row")
+                            start = max(0, row17_pos - 200)
+                            print(f"DEBUG: sheet1.xml around first <row>/r=\"17\" (pos {row17_pos}):\n"
+                                  f"{text[start:start + 4000]}", file=sys.stderr)
                     if "xl/sharedStrings.xml" in zf.namelist():
                         shared = zf.read("xl/sharedStrings.xml")
                         print(f"DEBUG: sharedStrings.xml is {len(shared)} bytes; first 2000 chars:\n"
