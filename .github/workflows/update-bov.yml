@@ -1,5 +1,7 @@
 name: Update BOV quote feed
 
+# Re-pushed as a follow-up commit to force GitHub Actions to index this
+# workflow (it wasn't registered when first added in the repo's initial commit).
 on:
   schedule:
     # Daily, well after MSE's end-of-day publication. Times are UTC.
