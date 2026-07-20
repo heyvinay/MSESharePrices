@@ -141,6 +141,34 @@ def convert_xls_to_xlsx_via_libreoffice(data: bytes) -> bytes:
         return converted.read_bytes()
 
 
+HEADER_SCAN_MAX_ROWS = 15
+
+
+def _looks_like_header_row(values: list) -> bool:
+    lowered = [str(v).strip().lower() for v in values]
+    return all(any(alias in lowered for alias in aliases) for aliases in HEADER_ALIASES.values())
+
+
+def _promote_header_row(raw_df: pd.DataFrame) -> pd.DataFrame:
+    """Find the real header row within the first HEADER_SCAN_MAX_ROWS rows and promote it.
+
+    Real MSE exports (confirmed against a live archive file) have a banner/title
+    row above the actual column headers, so the header is not reliably row 0.
+    Falls back to returning raw_df unchanged (pandas' default row-0-as-header
+    behaviour) if no row in the scan window matches -- normalise_headers() will
+    then raise its own clear MissingColumnError.
+    """
+    limit = min(HEADER_SCAN_MAX_ROWS, len(raw_df))
+    for row_idx in range(limit):
+        values = raw_df.iloc[row_idx].tolist()
+        if _looks_like_header_row(values):
+            promoted = raw_df.iloc[row_idx + 1:].copy()
+            promoted.columns = [str(v) for v in values]
+            promoted.reset_index(drop=True, inplace=True)
+            return promoted
+    return raw_df
+
+
 def read_workbook(data: bytes) -> pd.DataFrame:
     """Parse workbook bytes (.xls or .xlsx) into a DataFrame of raw rows.
 
@@ -148,16 +176,20 @@ def read_workbook(data: bytes) -> pd.DataFrame:
     falls back to a LibreOffice-based conversion if xlrd rejects a file that is
     nonetheless a genuine workbook (confirmed against a real MSE archive file:
     Content-Type application/vnd.ms-excel, correct OLE2 magic bytes, clean
-    sector-aligned size -- xlrd was simply wrong to reject it).
+    sector-aligned size -- xlrd was simply wrong to reject it). Reads without
+    assuming row 0 is the header, since real MSE exports have a banner row
+    above the actual column headers (also confirmed against a real file).
     """
     if data[:8] == OLE2_MAGIC:
         try:
-            return pd.read_excel(io.BytesIO(data), engine="xlrd",
-                                  engine_kwargs={"ignore_workbook_corruption": True})
+            raw = pd.read_excel(io.BytesIO(data), header=None, engine="xlrd",
+                                 engine_kwargs={"ignore_workbook_corruption": True})
         except Exception:  # noqa: BLE001 - xlrd raises assorted error types for bad files
             xlsx_data = convert_xls_to_xlsx_via_libreoffice(data)
-            return pd.read_excel(io.BytesIO(xlsx_data), engine="openpyxl")
-    return pd.read_excel(io.BytesIO(data))
+            raw = pd.read_excel(io.BytesIO(xlsx_data), header=None, engine="openpyxl")
+    else:
+        raw = pd.read_excel(io.BytesIO(data), header=None)
+    return _promote_header_row(raw)
 
 
 def normalise_headers(df: pd.DataFrame) -> pd.DataFrame:

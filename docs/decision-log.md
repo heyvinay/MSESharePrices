@@ -2,6 +2,32 @@
 
 Short ADR-style entries. Newest first.
 
+## 2026-07-20 — Scan for the real header row instead of assuming row 0
+
+**Context:** With the LibreOffice fallback in place, the live workflow run
+progressed past the xlrd failure and actually parsed the real MSE workbook —
+but `normalise_headers()` then failed with column 0 containing garbled binary
+text and 11 "Unnamed" columns. This is the classic signature of a banner/title
+row sitting above the real header row, which pandas' default `header=0`
+doesn't account for.
+
+**Decision:** `read_workbook()` now reads with `header=None` (every row as
+plain data) and a new `_promote_header_row()` scans the first
+`HEADER_SCAN_MAX_ROWS` (15) rows for the one that actually matches all three
+required canonical fields via `HEADER_ALIASES`, promotes that row to the
+column headers, and drops everything above and including it. If no matching
+row is found in the scan window, the raw frame is returned unchanged so
+`normalise_headers()` still raises its existing clear `MissingColumnError`.
+
+**Consequence:** `normalise_headers()` itself is unchanged and still expects a
+DataFrame with real column names — the header-row search is a preprocessing
+step, not a change to that function's contract, so existing tests for it
+needed no changes. This is the third fix needed to parse a real MSE file,
+after (1) the OLE2/xlrd routing and (2) the LibreOffice fallback — each prior
+fix was necessary but not sufficient on its own; this one was only visible
+once the first two were in place and parsing progressed far enough to reach
+real column data.
+
 ## 2026-07-20 — Fall back to LibreOffice when xlrd rejects a genuine .xls file
 
 **Context:** The `ignore_workbook_corruption` fix (below) did not resolve the

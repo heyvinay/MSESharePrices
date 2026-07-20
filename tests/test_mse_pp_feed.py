@@ -158,19 +158,24 @@ def test_process_workbook_end_to_end():
 
 # ---- read_workbook engine routing --------------------------------------------
 
+RAW_TWO_ROW_FRAME = pd.DataFrame([["symbol", "date", "close"], ["BOV", "2026-01-05", 1.92]])
+
+
 def test_read_workbook_routes_ole2_files_through_xlrd_with_corruption_tolerance(monkeypatch):
     calls = []
 
     def fake_read_excel(_buf, **kwargs):
         calls.append(kwargs)
-        return pd.DataFrame()
+        return RAW_TWO_ROW_FRAME.copy()
 
     monkeypatch.setattr(feed.pd, "read_excel", fake_read_excel)
 
     ole2_bytes = feed.OLE2_MAGIC + b"\x00" * 24
-    feed.read_workbook(ole2_bytes)
+    result = feed.read_workbook(ole2_bytes)
 
-    assert calls == [{"engine": "xlrd", "engine_kwargs": {"ignore_workbook_corruption": True}}]
+    assert calls == [{"header": None, "engine": "xlrd",
+                       "engine_kwargs": {"ignore_workbook_corruption": True}}]
+    assert list(result.columns) == ["symbol", "date", "close"]
 
 
 def test_read_workbook_leaves_xlsx_files_to_default_pandas_detection(monkeypatch):
@@ -178,25 +183,25 @@ def test_read_workbook_leaves_xlsx_files_to_default_pandas_detection(monkeypatch
 
     def fake_read_excel(_buf, **kwargs):
         calls.append(kwargs)
-        return pd.DataFrame()
+        return RAW_TWO_ROW_FRAME.copy()
 
     monkeypatch.setattr(feed.pd, "read_excel", fake_read_excel)
 
     zip_bytes = b"PK\x03\x04" + b"\x00" * 28
-    feed.read_workbook(zip_bytes)
+    result = feed.read_workbook(zip_bytes)
 
-    assert calls == [{}]
+    assert calls == [{"header": None}]
+    assert list(result.columns) == ["symbol", "date", "close"]
 
 
 def test_read_workbook_falls_back_to_libreoffice_when_xlrd_rejects_a_valid_file(monkeypatch):
     ole2_bytes = feed.OLE2_MAGIC + b"\x00" * 24
-    converted_marker = object()
 
     def fake_read_excel(_buf, **kwargs):
         if kwargs.get("engine") == "xlrd":
             raise Exception("directory corruption: seen[0] == 2")
         assert kwargs.get("engine") == "openpyxl"
-        return converted_marker
+        return RAW_TWO_ROW_FRAME.copy()
 
     conversion_calls = []
 
@@ -209,8 +214,29 @@ def test_read_workbook_falls_back_to_libreoffice_when_xlrd_rejects_a_valid_file(
 
     result = feed.read_workbook(ole2_bytes)
 
-    assert result is converted_marker
+    assert list(result.columns) == ["symbol", "date", "close"]
     assert conversion_calls == [ole2_bytes]
+
+
+# ---- header row detection (banner/title row above the real headers) ---------
+
+def test_promote_header_row_skips_a_banner_row_above_the_real_headers():
+    raw = pd.DataFrame([
+        ["MSE Daily Trading Summary 2026", None, None],
+        ["Symbol code", "DATE", "Close Price"],
+        ["BOV", "05-Jan-2026", 1.92],
+        ["APS", "05-Jan-2026", 0.55],
+    ])
+    promoted = feed._promote_header_row(raw)
+    assert list(promoted.columns) == ["Symbol code", "DATE", "Close Price"]
+    assert len(promoted) == 2
+    assert promoted.iloc[0]["Symbol code"] == "BOV"
+
+
+def test_promote_header_row_returns_input_unchanged_when_no_header_row_found():
+    raw = pd.DataFrame([["a", "b", "c"], ["d", "e", "f"]])
+    promoted = feed._promote_header_row(raw)
+    assert promoted is raw
 
 
 def test_convert_xls_to_xlsx_via_libreoffice_real_roundtrip():
