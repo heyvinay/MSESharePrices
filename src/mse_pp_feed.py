@@ -17,6 +17,7 @@ import argparse
 import csv
 import io
 import json
+import os
 import re
 import subprocess
 import sys
@@ -190,11 +191,20 @@ def read_workbook(data: bytes) -> pd.DataFrame:
     Reads without assuming row 0 is the header, since real MSE exports have a
     banner row above the actual column headers (confirmed against a real file).
     """
+    dump_dir = os.environ.get("MSE_DEBUG_DUMP_DIR")
+    if dump_dir:
+        Path(dump_dir).mkdir(parents=True, exist_ok=True)
+        Path(dump_dir, "input.xls").write_bytes(data)
+
     if data[:8] == OLE2_MAGIC:
         try:
             raw = pd.read_excel(io.BytesIO(data), header=None, engine="xlrd")
-        except Exception:  # noqa: BLE001 - xlrd raises assorted error types for bad files
+            print("DEBUG: xlrd succeeded directly (no LibreOffice fallback used)", file=sys.stderr)
+        except Exception as exc:  # noqa: BLE001 - xlrd raises assorted error types for bad files
+            print(f"DEBUG: xlrd raised ({exc}); falling back to LibreOffice", file=sys.stderr)
             xlsx_data = convert_xls_to_xlsx_via_libreoffice(data)
+            if dump_dir:
+                Path(dump_dir, "converted.xlsx").write_bytes(xlsx_data)
             raw = pd.read_excel(io.BytesIO(xlsx_data), header=None, engine="openpyxl")
     else:
         raw = pd.read_excel(io.BytesIO(data), header=None)

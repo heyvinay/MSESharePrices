@@ -40,6 +40,7 @@ jobs:
       - name: Generate BOV feed
         env:
           MANUAL_URLS: ${{ github.event.inputs.manual_urls }}
+          MSE_DEBUG_DUMP_DIR: ${{ github.event.inputs.manual_urls && 'debug-dump' || '' }}
         run: |
           ARGS=()
           if [ -n "$MANUAL_URLS" ]; then
@@ -48,6 +49,15 @@ jobs:
             done
           fi
           python src/mse_pp_feed.py --symbol BOV --output-json docs/json/BOV.json "${ARGS[@]}"
+
+      - name: Upload debug dump (manual runs only)
+        if: always() && github.event.inputs.manual_urls
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-dump
+          path: debug-dump/
+          if-no-files-found: ignore
+          retention-days: 3
 
       - name: Commit updated feed if changed
         run: |
