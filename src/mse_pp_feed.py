@@ -166,6 +166,10 @@ def _promote_header_row(raw_df: pd.DataFrame) -> pd.DataFrame:
             promoted.columns = [str(v) for v in values]
             promoted.reset_index(drop=True, inplace=True)
             return promoted
+
+    print(f"DEBUG: no header row found in first {limit} rows; dumping for diagnosis:", file=sys.stderr)
+    for row_idx in range(limit):
+        print(f"DEBUG: row {row_idx}: {raw_df.iloc[row_idx].tolist()!r}", file=sys.stderr)
     return raw_df
 
 
