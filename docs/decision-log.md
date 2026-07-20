@@ -2,6 +2,23 @@
 
 Short ADR-style entries. Newest first.
 
+## 2026-07-20 — Fix: git diff --quiet misses a brand-new untracked file
+
+**Context:** The first genuinely successful run (after the olefile-bypass fix landed) generated
+`docs/json/BOV.json` correctly, but the "Commit updated feed if changed" step logged "No changes ...;
+nothing to commit." and never pushed the file. `docs/json/BOV.json` didn't exist in the repo before this
+run — `git diff --quiet -- <path>` only detects changes to already-tracked files; it doesn't consider an
+untracked new file a "diff" at all, so the guard silently (and incorrectly) skipped the commit.
+
+**Decision:** Stage the file first (`git add`), then check `git diff --cached --quiet` (the staged diff)
+instead of the working-tree diff. A staged new file does show up as a diff against `HEAD`, so this
+correctly covers both "brand new file" and "changed existing file" cases.
+
+**Consequence:** This bug was independent of, and unrelated to, every `.xls`/OLE2 parsing issue
+investigated earlier — the feed generation itself was correct on the run that exposed this; only the
+commit step's change-detection was wrong, and only on the very first run (once the file exists and is
+tracked, the original `git diff --quiet` form would have worked correctly for all subsequent runs).
+
 ## 2026-07-20 — RESOLVED: real archive URL found, real root cause fixed, real data confirmed
 
 **Context:** The user found the real, correct download URL by browsing MSE's site

@@ -71,12 +71,16 @@ jobs:
 
       - name: Commit updated feed if changed
         run: |
-          if git diff --quiet -- docs/json/BOV.json; then
+          # `git diff --quiet` only detects changes to already-tracked files --
+          # it silently ignores a brand-new, untracked docs/json/BOV.json (as
+          # happened on this repo's very first successful run). Stage first,
+          # then check the *staged* diff, which correctly covers new files too.
+          git add docs/json/BOV.json
+          if git diff --cached --quiet -- docs/json/BOV.json; then
             echo "No changes to docs/json/BOV.json; nothing to commit."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add docs/json/BOV.json
           git commit -m "chore: refresh BOV quote feed"
           git push
