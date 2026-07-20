@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>MSESharePrices — MSE quote feed for Portfolio Performance</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 42rem; margin: 3rem auto; padding: 0 1.25rem; line-height: 1.5; color: #1a1a1a; }
+    code, pre { background: #f2f2f2; border-radius: 4px; padding: 0.15rem 0.4rem; }
+    pre { padding: 1rem; overflow-x: auto; }
+    a { color: #0b5fff; }
+    h1 { font-size: 1.5rem; }
+    table { border-collapse: collapse; margin: 1rem 0; }
+    td, th { border: 1px solid #ddd; padding: 0.4rem 0.8rem; text-align: left; }
+    @media (prefers-color-scheme: dark) {
+      body { background: #111; color: #eee; }
+      code, pre { background: #222; }
+      a { color: #6ea8fe; }
+      td, th { border-color: #444; }
+    }
+  </style>
+</head>
+<body>
+  <h1>MSESharePrices</h1>
+  <p>
+    A static historical-quote feed for Malta Stock Exchange (MSE) listed securities, published as JSON
+    so it can be read directly by <a href="https://www.portfolio-performance.info/">Portfolio Performance</a>'s
+    JSON quote-feed provider. Refreshed automatically via GitHub Actions.
+  </p>
+
+  <h2>Available feeds</h2>
+  <ul>
+    <li><a href="json/BOV.json">json/BOV.json</a> — Bank of Valletta plc</li>
+  </ul>
+
+  <h2>Portfolio Performance setup</h2>
+  <p>In the security's "Historical Quotes" tab, choose provider <strong>JSON</strong> and set:</p>
+  <table>
+    <tr><td>Feed URL</td><td><code>https://heyvinay.github.io/MSESharePrices/json/BOV.json</code></td></tr>
+    <tr><td>Path to Date</td><td><code>$[*].date</code></td></tr>
+    <tr><td>Path to Close</td><td><code>$[*].close</code></td></tr>
+  </table>
+
+  <h2>Source</h2>
+  <p>
+    Data is derived from MSE's published
+    <a href="https://www.borzamalta.com.mt/publications-and-statistics?category=33">Daily Trading Summary yearly archive</a>.
+    See the repository's <code>docs/</code> folder for the full spec, architecture notes, and known
+    limitations.
+  </p>
+
+  <p><a href="https://github.com/heyvinay/MSESharePrices">Source code on GitHub</a></p>
+</body>
+</html>

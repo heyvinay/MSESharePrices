@@ -1,0 +1,43 @@
+name: Update BOV quote feed
+
+on:
+  schedule:
+    # Daily, well after MSE's end-of-day publication. Times are UTC.
+    - cron: "0 18 * * 1-5"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  update-feed:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        run: pytest tests/
+
+      - name: Generate BOV feed
+        run: python src/mse_pp_feed.py --symbol BOV --output-json docs/json/BOV.json
+
+      - name: Commit updated feed if changed
+        run: |
+          if git diff --quiet -- docs/json/BOV.json; then
+            echo "No changes to docs/json/BOV.json; nothing to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/json/BOV.json
+          git commit -m "chore: refresh BOV quote feed"
+          git push
