@@ -2,6 +2,32 @@
 
 Short ADR-style entries. Newest first.
 
+## 2026-07-20 — Remove ignore_workbook_corruption: it caused silent data corruption
+
+**Context:** After the header-row-scan fix (below), the live workflow still
+failed, but with a new and much more serious symptom: the row dump showed
+literal OLE2 container internals — the strings `Root Entry`, `Workbook`,
+`SummaryInformation`, `MsoDataStore` — appearing as cell *values*. Those are
+OLE2 compound-document stream/directory names, not spreadsheet content. This
+meant `read_workbook()`'s `xlrd` attempt was **succeeding** (no exception, so
+the LibreOffice fallback never ran) while silently returning garbage.
+
+**Decision:** `ignore_workbook_corruption=True` does not fix the directory-chain
+issue this file triggers — it only suppresses xlrd's own safety check, letting
+it proceed with a broken understanding of the compound file's structure and
+return corrupted data instead of raising. Removed that flag entirely; `xlrd` is
+now called in its default strict mode, which correctly raises on this file
+every time, which is what triggers the (actually correct) LibreOffice fallback.
+
+**Consequence:** A loud, deterministic failure from `xlrd` is the desired
+outcome for this file — silence would be far worse than an exception here,
+since it would publish wrong closing prices into a feed a real portfolio
+depends on. This is the fourth fix in this chain (after: 1. OLE2/xlrd routing,
+2. the ignore_workbook_corruption attempt — now reverted, 3. LibreOffice
+fallback, 4. header-row scanning) — each prior one was necessary infrastructure
+even where a later fix corrected a mistake, since the LibreOffice fallback and
+header-row scan are still both needed regardless of this correction.
+
 ## 2026-07-20 — Scan for the real header row instead of assuming row 0
 
 **Context:** With the LibreOffice fallback in place, the live workflow run

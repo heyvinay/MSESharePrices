@@ -161,7 +161,7 @@ def test_process_workbook_end_to_end():
 RAW_TWO_ROW_FRAME = pd.DataFrame([["symbol", "date", "close"], ["BOV", "2026-01-05", 1.92]])
 
 
-def test_read_workbook_routes_ole2_files_through_xlrd_with_corruption_tolerance(monkeypatch):
+def test_read_workbook_routes_ole2_files_through_xlrd_in_strict_mode(monkeypatch):
     calls = []
 
     def fake_read_excel(_buf, **kwargs):
@@ -173,8 +173,10 @@ def test_read_workbook_routes_ole2_files_through_xlrd_with_corruption_tolerance(
     ole2_bytes = feed.OLE2_MAGIC + b"\x00" * 24
     result = feed.read_workbook(ole2_bytes)
 
-    assert calls == [{"header": None, "engine": "xlrd",
-                       "engine_kwargs": {"ignore_workbook_corruption": True}}]
+    # Deliberately NOT ignore_workbook_corruption -- that flag doesn't fix
+    # xlrd's directory-chain issue, it just suppresses the failure and returns
+    # garbage. A loud failure here is what triggers the LibreOffice fallback.
+    assert calls == [{"header": None, "engine": "xlrd"}]
     assert list(result.columns) == ["symbol", "date", "close"]
 
 
