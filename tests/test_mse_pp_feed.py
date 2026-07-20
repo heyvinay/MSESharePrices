@@ -198,18 +198,22 @@ def test_read_workbook_leaves_xlsx_files_to_default_pandas_detection(monkeypatch
 
 def test_read_workbook_falls_back_to_libreoffice_when_xlrd_rejects_a_valid_file(monkeypatch):
     ole2_bytes = feed.OLE2_MAGIC + b"\x00" * 24
+    # read_workbook's fallback path inspects the converted file for real (sheet
+    # names, zip structure) for diagnostics, so fake_convert must return a real
+    # readable xlsx rather than an arbitrary byte string.
+    real_xlsx_bytes = make_workbook_bytes(
+        pd.DataFrame({"symbol": ["BOV"], "date": ["2026-01-05"], "close": [1.92]})
+    )
 
     def fake_read_excel(_buf, **kwargs):
-        if kwargs.get("engine") == "xlrd":
-            raise Exception("directory corruption: seen[0] == 2")
-        assert kwargs.get("engine") == "openpyxl"
-        return RAW_TWO_ROW_FRAME.copy()
+        assert kwargs.get("engine") == "xlrd"
+        raise Exception("directory corruption: seen[0] == 2")
 
     conversion_calls = []
 
     def fake_convert(data):
         conversion_calls.append(data)
-        return b"fake-xlsx-bytes"
+        return real_xlsx_bytes
 
     monkeypatch.setattr(feed.pd, "read_excel", fake_read_excel)
     monkeypatch.setattr(feed, "convert_xls_to_xlsx_via_libreoffice", fake_convert)

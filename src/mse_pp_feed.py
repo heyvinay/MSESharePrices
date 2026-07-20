@@ -180,13 +180,13 @@ def read_workbook(data: bytes) -> pd.DataFrame:
     For legacy .xls (OLE2) files, tries xlrd first (fast, no subprocess) in its
     default STRICT mode, then falls back to a LibreOffice-based conversion if
     xlrd rejects the file. Deliberately does NOT pass ignore_workbook_corruption:
-    that flag doesn't fix the directory-chain issue MSE's real file triggers --
-    it only suppresses the safety check, so xlrd silently returns garbage (raw
-    OLE2 container bytes -- literal "Root Entry"/"Workbook"/"SummaryInformation"
-    stream names -- misread as cell content) instead of raising. A loud failure
-    here is what we want, since it's what triggers the LibreOffice fallback,
-    which is the one that actually produces correct data (see
-    docs/decision-log.md, 2026-07-20 entries).
+    that flag doesn't fix the directory-chain issue MSE's real file triggers,
+    it only suppresses the safety check. A live run confirmed xlrd DOES reliably
+    raise on this file in strict mode (good -- that's what triggers the
+    fallback); the "Root Entry"/"Workbook"/"SummaryInformation" OLE2-internals
+    garbage seen in early debugging actually comes from the LibreOffice
+    conversion output itself, not from xlrd silently succeeding -- see
+    docs/decision-log.md, 2026-07-20 entries, for the corrected diagnosis.
 
     Reads without assuming row 0 is the header, since real MSE exports have a
     banner row above the actual column headers (confirmed against a real file).
@@ -205,7 +205,18 @@ def read_workbook(data: bytes) -> pd.DataFrame:
             xlsx_data = convert_xls_to_xlsx_via_libreoffice(data)
             if dump_dir:
                 Path(dump_dir, "converted.xlsx").write_bytes(xlsx_data)
-            raw = pd.read_excel(io.BytesIO(xlsx_data), header=None, engine="openpyxl")
+            print(f"DEBUG: converted.xlsx is {len(xlsx_data)} bytes, "
+                  f"starts with {xlsx_data[:4]!r} (zip magic is b'PK\\x03\\x04')", file=sys.stderr)
+            if xlsx_data[:2] == b"PK":
+                import zipfile
+                with zipfile.ZipFile(io.BytesIO(xlsx_data)) as zf:
+                    print(f"DEBUG: converted.xlsx zip contents: {zf.namelist()}", file=sys.stderr)
+            excel_file = pd.ExcelFile(io.BytesIO(xlsx_data), engine="openpyxl")
+            print(f"DEBUG: converted.xlsx sheet_names: {excel_file.sheet_names}", file=sys.stderr)
+            for sheet in excel_file.sheet_names:
+                preview = excel_file.parse(sheet, header=None, nrows=5)
+                print(f"DEBUG: sheet {sheet!r} first rows:\n{preview.to_string()}", file=sys.stderr)
+            raw = excel_file.parse(excel_file.sheet_names[0], header=None)
     else:
         raw = pd.read_excel(io.BytesIO(data), header=None)
     return _promote_header_row(raw)
