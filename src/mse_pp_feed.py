@@ -214,6 +214,16 @@ def read_workbook(data: bytes) -> pd.DataFrame:
             if xlsx_data[:2] == b"PK":
                 with zipfile.ZipFile(io.BytesIO(xlsx_data)) as zf:
                     print(f"DEBUG: converted.xlsx zip contents: {zf.namelist()}", file=sys.stderr)
+                    for sheet_xml_name in ("xl/worksheets/sheet1.xml",):
+                        if sheet_xml_name in zf.namelist():
+                            raw_xml = zf.read(sheet_xml_name)
+                            print(f"DEBUG: {sheet_xml_name} is {len(raw_xml)} bytes; "
+                                  f"first 3000 chars:\n{raw_xml[:3000].decode('utf-8', errors='replace')}",
+                                  file=sys.stderr)
+                    if "xl/sharedStrings.xml" in zf.namelist():
+                        shared = zf.read("xl/sharedStrings.xml")
+                        print(f"DEBUG: sharedStrings.xml is {len(shared)} bytes; first 2000 chars:\n"
+                              f"{shared[:2000].decode('utf-8', errors='replace')}", file=sys.stderr)
             excel_file = pd.ExcelFile(io.BytesIO(xlsx_data), engine="openpyxl")
             print(f"DEBUG: converted.xlsx sheet_names: {excel_file.sheet_names}", file=sys.stderr)
             for sheet in excel_file.sheet_names:
