@@ -206,18 +206,43 @@ def test_read_workbook_leaves_xlsx_files_to_default_pandas_detection(monkeypatch
     assert list(result.columns) == ["symbol", "date", "close"]
 
 
-def test_read_workbook_falls_back_to_libreoffice_when_xlrd_rejects_a_valid_file(monkeypatch):
+def test_read_workbook_uses_olefile_bypass_when_xlrd_rejects_a_valid_file(monkeypatch):
     ole2_bytes = feed.OLE2_MAGIC + b"\x00" * 24
-    # read_workbook's fallback path inspects the converted file for real (sheet
-    # names, zip structure) for diagnostics, so fake_convert must return a real
-    # readable xlsx rather than an arbitrary byte string.
+    bypass_calls = []
+
+    def fake_read_excel(_buf, **kwargs):
+        assert kwargs.get("engine") == "xlrd"
+        raise Exception("directory corruption: seen[0] == 2")
+
+    def fake_bypass(data):
+        bypass_calls.append(data)
+        return RAW_TWO_ROW_FRAME.copy()
+
+    monkeypatch.setattr(feed.pd, "read_excel", fake_read_excel)
+    monkeypatch.setattr(feed, "read_xls_via_olefile_bypass", fake_bypass)
+
+    result = feed.read_workbook(ole2_bytes)
+
+    assert bypass_calls == [ole2_bytes]
+    assert list(result.columns) == ["symbol", "date", "close"]
+
+
+def test_read_workbook_falls_back_to_libreoffice_when_olefile_bypass_also_fails(monkeypatch):
+    ole2_bytes = feed.OLE2_MAGIC + b"\x00" * 24
+    # read_workbook's LibreOffice last resort re-reads the converted file for
+    # real, so fake_convert must return a real readable xlsx.
     real_xlsx_bytes = make_workbook_bytes(
         pd.DataFrame({"symbol": ["BOV"], "date": ["2026-01-05"], "close": [1.92]})
     )
 
     def fake_read_excel(_buf, **kwargs):
-        assert kwargs.get("engine") == "xlrd"
-        raise Exception("directory corruption: seen[0] == 2")
+        if kwargs.get("engine") == "xlrd":
+            raise Exception("directory corruption: seen[0] == 2")
+        assert kwargs.get("engine") == "openpyxl"
+        return RAW_TWO_ROW_FRAME.copy()
+
+    def fake_bypass(data):
+        raise feed.WorkbookConversionError("olefile bypass also failed")
 
     conversion_calls = []
 
@@ -226,6 +251,7 @@ def test_read_workbook_falls_back_to_libreoffice_when_xlrd_rejects_a_valid_file(
         return real_xlsx_bytes
 
     monkeypatch.setattr(feed.pd, "read_excel", fake_read_excel)
+    monkeypatch.setattr(feed, "read_xls_via_olefile_bypass", fake_bypass)
     monkeypatch.setattr(feed, "convert_xls_to_xlsx_via_libreoffice", fake_convert)
 
     result = feed.read_workbook(ole2_bytes)
@@ -367,6 +393,47 @@ def test_is_xlsx_zip_distinguishes_a_real_xlsx_from_a_wrapper_zip():
 
     assert feed._is_xlsx_zip(real_xlsx) is True
     assert feed._is_xlsx_zip(wrapper_zip) is False
+
+
+# ---- real MSE fixture (end-to-end regression) --------------------------------
+
+REAL_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "trading_statistics_2026_sample.xls"
+
+
+def test_process_workbook_extracts_real_bov_data_from_a_real_mse_export():
+    """Regression test against an actual MSE "Daily Trading Summary" export
+    (public market data), authored by Crystal Reports per its OLE2 metadata.
+
+    This is the file class that exposed the real bugs this project hit:
+    xlrd's own directory-stream navigation trips a genuine (if practically
+    harmless) cyclic sector chain that Excel tolerates; read_workbook() now
+    recovers via read_xls_via_olefile_bypass(). See docs/decision-log.md,
+    2026-07-20 entries, for the full investigation.
+    """
+    if not REAL_FIXTURE_PATH.exists():
+        pytest.skip(f"real fixture not present at {REAL_FIXTURE_PATH}")
+
+    data = REAL_FIXTURE_PATH.read_bytes()
+    result = feed.process_workbook(data, "BOV")
+    final = feed.dedupe_and_sort(result.quotes)
+
+    assert len(final) > 100
+    assert final[0]["date"] < final[-1]["date"]
+    assert all(0.5 < q["close"] < 5.0 for q in final)  # BOV is a low-single-digit-euro stock
+    assert result.rows_dropped_invalid == 0
+
+
+def test_read_xls_via_olefile_bypass_matches_the_known_real_header_row():
+    if not REAL_FIXTURE_PATH.exists():
+        pytest.skip(f"real fixture not present at {REAL_FIXTURE_PATH}")
+
+    data = REAL_FIXTURE_PATH.read_bytes()
+    raw = feed.read_xls_via_olefile_bypass(data)
+
+    header_row = raw.iloc[0].tolist()
+    assert header_row[:5] == [
+        "Symbol code", "Daily High", "Daily  Low", "Open Price", "Close Price",
+    ]
 
 
 # ---- discover_urls -----------------------------------------------------------

@@ -10,11 +10,15 @@ Pages and refreshed automatically.
 
 1. **Discover or accept source files** — attempt to discover yearly "Daily Trading Summary" archive
    download links from the MSE publications-and-statistics page (category 33); accept one or more
-   `--manual-url` values as a documented fallback when discovery is unreliable or blocked.
-2. **Download** one or more yearly `.xls` workbooks.
+   `--manual-url` values as the primary, confirmed-working path (page discovery does not currently work —
+   see Known limitation below).
+2. **Download** one or more yearly archive files — MSE's real archive URL is a `.zip` wrapper containing
+   an `.xls` workbook, not a bare `.xls`; `process_workbook()` extracts workbook members from zip archives
+   automatically.
 3. **Parse** each workbook into rows, tolerating minor header naming variation between years
    (e.g. `Symbol code` vs `Symbol Code` vs `Ticker`; `DATE` vs `Trade Date`; `Close Price` vs `Close` vs
-   `Last Price`).
+   `Last Price`), and recovering from a real OLE2 sector-chain defect real MSE exports have (see
+   `read_xls_via_olefile_bypass()` and `docs/decision-log.md`).
 4. **Filter** rows to the requested symbol (default `BOV`).
 5. **Clean and transform**:
    - normalise dates to ISO `YYYY-MM-DD`,
@@ -54,20 +58,23 @@ Pages and refreshed automatically.
 ## Known limitation (documented, not hidden)
 
 MSE's site returned HTTP 403 to automated requests from the development sandbox used to build this
-project, so the yearly-archive HTML structure could not be verified live during development, and
-`discover_urls()` finds zero downloadable links when GitHub Actions fetches the archive page (the page is
-likely JS-rendered) — see `docs/architecture.md` § Risks.
+project, and `discover_urls()` finds zero downloadable links when GitHub Actions fetches the archive page
+(the page is likely JS-rendered) — see `docs/architecture.md` § Risks. Automated page discovery is
+therefore not currently a working path.
 
-**The parsing pipeline itself has been validated against a real MSE file** (`Daily_Market_Extract.xls`,
-via GitHub Actions, which has normal internet access unlike the dev sandbox): the OLE2/xlrd routing, the
-LibreOffice fallback for files xlrd can't parse, and header-row scanning all worked correctly and produced
-genuinely readable MSE content. What's still unresolved is that the two candidate yearly-archive URLs
-tried (`trading statistics 2025.xls` and `trading statistics 2026.xls`, both surfaced by AI research in
-`docs/plan.md` and never confirmed by a human) consistently return garbled, content-free responses for
-both years — most likely wrong/stale URLs, not a defect in this project. See `docs/qa.md`'s "Finding"
-section and `docs/decision-log.md` for the full investigation.
+**This is resolved for the data pipeline itself.** The real, confirmed-working archive URL (found by the
+user browsing MSE's site directly) is:
 
-**Before relying on unattended daily runs:** a human must browse
-`https://www.borzamalta.com.mt/publications-and-statistics?category=33` directly, obtain a real, working
-yearly-archive download URL, and confirm it via `--manual-url` (or the workflow's `manual_urls` dispatch
-input) produces a sane `docs/json/BOV.json`.
+```
+https://cdn.borzamalta.com.mt/download/archives/Trading-Statistics/Trading-Statistics<YYYY>.zip
+```
+
+The full pipeline — zip extraction, OLE2 parsing (via `read_xls_via_olefile_bypass()`, which fixes a real
+sector-chain defect Crystal-Reports-authored MSE exports have), and header-row scanning — has been
+validated against real MSE files (see `tests/fixtures/trading_statistics_2026_sample.xls` and
+`docs/decision-log.md`'s 2026-07-20 "RESOLVED" entry), producing genuine BOV historical prices matching
+what the user confirmed by opening the same file in Microsoft Excel.
+
+The workflow's default (non-`manual_urls`) scheduled run now targets this URL pattern for the current year
+directly, since page discovery doesn't work. `--manual-url` (or the workflow's `manual_urls` dispatch
+input) remains available to override with a specific file if needed.

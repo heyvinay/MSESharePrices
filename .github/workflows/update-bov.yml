@@ -42,12 +42,22 @@ jobs:
           MANUAL_URLS: ${{ github.event.inputs.manual_urls }}
           MSE_DEBUG_DUMP_DIR: ${{ github.event.inputs.manual_urls && 'debug-dump' || '' }}
         run: |
-          ARGS=()
+          # discover_urls() against the live archive page returns no links when
+          # fetched by an automated client (the page is likely JS-rendered) --
+          # see docs/architecture.md and docs/qa.md. The real, confirmed-working
+          # download URL pattern for MSE's yearly archive is a .zip, not a bare
+          # .xls (see docs/decision-log.md, 2026-07-20 zip/olefile entries), so
+          # default to the current year's archive unless overridden.
           if [ -n "$MANUAL_URLS" ]; then
-            for url in $MANUAL_URLS; do
-              ARGS+=(--manual-url "$url")
-            done
+            ARCHIVE_URLS="$MANUAL_URLS"
+          else
+            YEAR=$(date +%Y)
+            ARCHIVE_URLS="https://cdn.borzamalta.com.mt/download/archives/Trading-Statistics/Trading-Statistics${YEAR}.zip"
           fi
+          ARGS=()
+          for url in $ARCHIVE_URLS; do
+            ARGS+=(--manual-url "$url")
+          done
           python src/mse_pp_feed.py --symbol BOV --output-json docs/json/BOV.json "${ARGS[@]}"
 
       - name: Upload debug dump (manual runs only)

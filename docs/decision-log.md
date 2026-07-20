@@ -2,6 +2,59 @@
 
 Short ADR-style entries. Newest first.
 
+## 2026-07-20 — RESOLVED: real archive URL found, real root cause fixed, real data confirmed
+
+**Context:** The user found the real, correct download URL by browsing MSE's site
+directly: `https://cdn.borzamalta.com.mt/download/archives/Trading-Statistics/Trading-StatisticsYYYY.zip`
+(a `.zip`, not a bare `.xls` as every previously-guessed URL assumed). This superseded
+the "guessed URLs are likely wrong" entry below — that entry was right that the
+guessed URLs were bad, but its "the file is probably corrupted" hypothesis for
+the *real* URL turned out to be wrong once tested against the actual source.
+
+**What the zip needed:** `process_workbook()` now detects a zip that isn't
+itself a valid xlsx and extracts `.xls`/`.xlsx` members from inside it (see
+the zip-handling entry below).
+
+**The real root cause, found via user-uploaded real files:** the extracted
+`.xls` (authored by **Crystal Reports**, per its own OLE2 metadata — a known
+source of non-standard-but-valid `.xls` exports) makes `xlrd`'s own
+directory-stream navigation trip over a **genuinely cyclic sector chain**.
+This was confirmed two ways:
+- Naively bypassing xlrd's "seen sector" cycle-detection (thinking it was a
+  false-positive corruption check, per the earlier `ignore_workbook_corruption`
+  investigation) caused a real infinite loop that consumed **11.6GB of RAM**
+  in this sandbox before being killed. The check is real cycle-detection, not
+  just an overzealous corruption flag.
+- The user opened the exact same file in real Microsoft Excel and it rendered
+  perfectly — a clean table with real headers (`Symbol code`, `Daily High`,
+  `Daily  Low`, `Open Price`, `Close Price`, `CHANGE  in cents`, `TWAP`,
+  `DEALS`, `VOLUME`, `VALUE`, `MARKET CODE *`, `DATE`) and real data (`BOV`,
+  `1.720`, ..., `03-Jan-2025`). Excel tolerates this defect; `xlrd` and
+  LibreOffice's headless conversion (independently, in different ways) do not.
+
+**The fix:** `read_xls_via_olefile_bypass()` (in `src/mse_pp_feed.py`) uses the
+`olefile` library — which, like Excel, does not depend on walking the same
+directory-stream chain to locate named streams — to extract the raw
+`"Workbook"` BIFF stream bytes directly, then feeds those bytes straight into
+`xlrd`'s own (well-tested) `Book` object, bypassing only the one broken
+compound-document-navigation step. `read_workbook()`'s fallback order is now:
+(1) `xlrd`'s normal entrypoint, fast path for well-formed files; (2) the
+`olefile` bypass, the fix for this real defect; (3) the LibreOffice conversion,
+kept only as a last resort for whatever might defeat both of the above.
+
+**Verified against the real files** (`tests/fixtures/trading_statistics_2026_sample.xls`,
+committed as a regression fixture — MSE market data is public): the full
+pipeline (`process_workbook` → `dedupe_and_sort` → JSON) correctly recovers
+132 real BOV closing-price rows spanning 2026-01-05 through 2026-07-20, prices
+€1.91–€2.13, matching the range visible in the user's own Excel screenshot.
+
+**Consequence:** The live-verification gap that shaped much of this project's
+early development (`docs/spec.md`'s original "MSE blocked automated requests"
+caveat) is closed. The workflow's default (non-`manual_urls`) scheduled run
+now targets `Trading-Statistics<current-year>.zip` directly, since
+`discover_urls()` against the live HTML page still returns nothing (the page
+is likely JS-rendered) and this is the only proven-working source.
+
 ## 2026-07-20 — Conclusion: the guessed archive URLs are likely wrong, not a parsing bug
 
 **Context:** After confirming the OLE2/xlrd routing, the LibreOffice fallback, and

@@ -27,25 +27,30 @@ pip install -r requirements.txt
 
 ## Local usage
 
-Run for BOV, letting the tool discover archive URLs itself:
+Run for BOV against MSE's real yearly archive URL (page discovery doesn't work — see Known limitations —
+so `--manual-url` is the recommended path; the tool also extracts `.xls`/`.xlsx` files from a `.zip`
+archive automatically):
 
 ```bash
-python src/mse_pp_feed.py --symbol BOV --start-year 2024 --end-year 2026
+python src/mse_pp_feed.py --symbol BOV \
+  --manual-url "https://cdn.borzamalta.com.mt/download/archives/Trading-Statistics/Trading-Statistics2025.zip" \
+  --output-json docs/json/BOV.json
 ```
 
 Run for a different MSE symbol:
 
 ```bash
-python src/mse_pp_feed.py --symbol APS --output-json docs/json/APS.json
+python src/mse_pp_feed.py --symbol APS \
+  --manual-url "https://cdn.borzamalta.com.mt/download/archives/Trading-Statistics/Trading-Statistics2025.zip" \
+  --output-json docs/json/APS.json
 ```
 
-Run against one or more manually-provided workbook files or URLs (bypasses page discovery entirely —
-use this if the MSE archive page structure changes or is unreachable):
+Run against one or more manually-provided local files (also supported, e.g. for a pre-downloaded file or
+one of MSE's other statistics files):
 
 ```bash
 python src/mse_pp_feed.py --symbol BOV \
-  --manual-url /path/to/trading_statistics_2025.xls \
-  --manual-url /path/to/trading_statistics_2026.xls \
+  --manual-url /path/to/Trading-Statistics2025.zip \
   --output-json docs/json/BOV.json \
   --output-csv /tmp/BOV.csv
 ```
@@ -92,26 +97,30 @@ On the security's **Historical Quotes** tab:
 ## Known limitations
 
 - **MSE data is end-of-day only.** This is not, and cannot be, a real-time feed.
-- **The parsing pipeline is validated against a real MSE file, but the default archive URL is not yet
-  correct.** Legacy `.xls` files from MSE can trip `xlrd`'s strict parser (`directory corruption` errors);
-  `read_workbook()` falls back to converting via headless LibreOffice, then scans for the real header row
-  (MSE exports have a banner row above it). This was confirmed working end-to-end against a real file,
-  `Daily_Market_Extract.xls` — GitHub Actions correctly extracted genuine, readable MSE content from it.
-  However, the yearly-archive URLs guessed from AI research in [`docs/plan.md`](docs/plan.md)
-  (`trading statistics 2025.xls` and `2026.xls`) both return garbled, content-free data — very likely wrong
-  or stale URLs, not a defect in this project. **A human needs to browse
-  `https://www.borzamalta.com.mt/publications-and-statistics?category=33` directly to get a real working
-  URL** and pass it via `--manual-url` (or the workflow's `manual_urls` dispatch input) before trusting the
-  scheduled Action. See [`docs/qa.md`](docs/qa.md)'s "Finding" section and
-  [`docs/decision-log.md`](docs/decision-log.md) for the full investigation.
-- **Archive page structure may change / can't be scraped from this environment** —
-  `discover_urls()` found zero downloadable links when fetched from GitHub Actions (the page is likely
-  JS-rendered); `--manual-url` is the documented fallback and, for now, the only proven path to data.
+- **Archive page discovery doesn't work from this environment** — `discover_urls()` finds zero downloadable
+  links when fetched by an automated client (the page is likely JS-rendered). The real, confirmed-working
+  source is a direct download URL instead:
+  ```
+  https://cdn.borzamalta.com.mt/download/archives/Trading-Statistics/Trading-Statistics<YYYY>.zip
+  ```
+  The workflow's default scheduled run targets this URL for the current year automatically; `--manual-url`
+  (or the workflow's `manual_urls` dispatch input) can override it.
+- **MSE's real `.xls` exports (authored by Crystal Reports) trip a real defect in `xlrd`'s own
+  directory-stream navigation** — a genuinely cyclic sector chain that Microsoft Excel tolerates but `xlrd`
+  does not. `read_workbook()` recovers via `read_xls_via_olefile_bypass()`, which extracts the raw
+  `Workbook` BIFF stream using the `olefile` library (which, like Excel, doesn't depend on that broken
+  navigation step) and feeds it directly to `xlrd`'s own BIFF parser. Verified against real MSE files (see
+  `tests/fixtures/trading_statistics_2026_sample.xls` and [`docs/decision-log.md`](docs/decision-log.md)'s
+  2026-07-20 "RESOLVED" entry) — 132 real BOV rows, correct dates and prices, matching what the file shows
+  when opened directly in Excel. LibreOffice conversion remains as a last-resort fallback for anything that
+  defeats both `xlrd` and the olefile bypass, but should rarely trigger now.
+- MSE's yearly archive is served as a `.zip` wrapper around the `.xls` workbook, not the workbook directly —
+  `process_workbook()` extracts `.xls`/`.xlsx` members from zip archives automatically.
 - Only closing price is captured (no open/high/low/volume) — that's all Portfolio Performance's JSON
   historical-quote provider needs.
-- Requires a system-level LibreOffice install (`libreoffice-calc`, added via apt in the workflow) as a
-  fallback `.xls` converter — this adds install time to each scheduled run but only the LibreOffice
-  conversion step itself runs conditionally, only for files `xlrd` rejects.
+- Requires a system-level LibreOffice install (`libreoffice-calc`, added via apt in the workflow) purely as
+  a last-resort fallback converter — it should rarely actually run now that the real root cause (above) is
+  fixed, but the apt-get install step still costs time on every scheduled run.
 
 ## Troubleshooting
 

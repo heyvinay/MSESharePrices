@@ -28,8 +28,13 @@ from datetime import date
 from pathlib import Path
 from urllib.parse import urljoin
 
+import olefile
 import pandas as pd
 import requests
+import xlrd
+import xlrd.biffh
+import xlrd.book
+import xlrd.xldate
 
 ARCHIVE_PAGE_URL = "https://www.borzamalta.com.mt/publications-and-statistics?category=33"
 ARCHIVE_BASE_URL = "https://www.borzamalta.com.mt"
@@ -178,19 +183,73 @@ def _promote_header_row(raw_df: pd.DataFrame) -> pd.DataFrame:
     return raw_df
 
 
+def read_xls_via_olefile_bypass(data: bytes) -> pd.DataFrame:
+    """Read an OLE2 .xls by extracting the raw 'Workbook' stream via olefile
+    and feeding it directly to xlrd's BIFF parser, bypassing xlrd's own
+    compound-document directory navigation entirely.
+
+    Confirmed against real MSE archive files (authored by Crystal Reports,
+    per their OLE2 metadata): the compound document's own internal
+    "directory" stream has a genuinely cyclic sector chain. This is a real
+    defect -- naively disabling xlrd's cycle-detection there hangs forever
+    reading the same sectors indefinitely (confirmed; do not attempt that
+    again). Excel opens these files fine regardless, and so does olefile,
+    because neither depends on walking that same directory-stream chain to
+    locate named streams. Once the raw Workbook stream bytes are extracted
+    this way, xlrd's ordinary (well-tested) BIFF record parsing handles the
+    rest correctly. See docs/decision-log.md, 2026-07-20 entries, for the
+    full investigation this fix is based on.
+    """
+    ole = olefile.OleFileIO(data)
+    try:
+        workbook_bytes = ole.openstream("Workbook").read()
+    finally:
+        ole.close()
+
+    book = xlrd.book.Book()
+    book.logfile = io.StringIO()
+    book.verbosity = 0
+    book.use_mmap = False
+    book.encoding_override = None
+    book.formatting_info = False
+    book.on_demand = False
+    book.ragged_rows = True
+    book.mem = workbook_bytes
+    book.base = 0
+    book.stream_len = len(workbook_bytes)
+    book._position = 0
+
+    biff_version = book.getbof(xlrd.biffh.XL_WORKBOOK_GLOBALS)
+    if not biff_version:
+        raise WorkbookConversionError("Can't determine BIFF version from extracted Workbook stream")
+    book.biff_version = biff_version
+    book.parse_globals()
+    book._sheet_list = [None for _ in book._sheet_names]
+    book.get_sheets()
+    book.nsheets = len(book._sheet_list)
+
+    sheet = book.sheet_by_index(0)
+    rows = []
+    for r in range(sheet.nrows):
+        row = sheet.row(r)
+        values = [
+            xlrd.xldate.xldate_as_datetime(cell.value, book.datemode)
+            if cell.ctype == xlrd.XL_CELL_DATE else cell.value
+            for cell in row
+        ]
+        rows.append(values)
+    return pd.DataFrame(rows)
+
+
 def read_workbook(data: bytes) -> pd.DataFrame:
     """Parse workbook bytes (.xls or .xlsx) into a DataFrame of raw rows.
 
-    For legacy .xls (OLE2) files, tries xlrd first (fast, no subprocess) in its
-    default STRICT mode, then falls back to a LibreOffice-based conversion if
-    xlrd rejects the file. Deliberately does NOT pass ignore_workbook_corruption:
-    that flag doesn't fix the directory-chain issue MSE's real file triggers,
-    it only suppresses the safety check. A live run confirmed xlrd DOES reliably
-    raise on this file in strict mode (good -- that's what triggers the
-    fallback); the "Root Entry"/"Workbook"/"SummaryInformation" OLE2-internals
-    garbage seen in early debugging actually comes from the LibreOffice
-    conversion output itself, not from xlrd silently succeeding -- see
-    docs/decision-log.md, 2026-07-20 entries, for the corrected diagnosis.
+    For legacy .xls (OLE2) files, tries xlrd's normal entrypoint first (fast,
+    no extra dependencies). Real MSE archive files trip xlrd's own directory
+    navigation on a genuine (if harmless-in-practice) sector-chain defect
+    that Excel itself tolerates; read_xls_via_olefile_bypass() is the proven
+    fix for that (see its docstring). LibreOffice conversion is kept only as
+    a last-resort fallback for files that defeat both of those.
 
     Reads without assuming row 0 is the header, since real MSE exports have a
     banner row above the actual column headers (confirmed against a real file).
@@ -203,38 +262,14 @@ def read_workbook(data: bytes) -> pd.DataFrame:
     if data[:8] == OLE2_MAGIC:
         try:
             raw = pd.read_excel(io.BytesIO(data), header=None, engine="xlrd")
-            print("DEBUG: xlrd succeeded directly (no LibreOffice fallback used)", file=sys.stderr)
-        except Exception as exc:  # noqa: BLE001 - xlrd raises assorted error types for bad files
-            print(f"DEBUG: xlrd raised ({exc}); falling back to LibreOffice", file=sys.stderr)
-            xlsx_data = convert_xls_to_xlsx_via_libreoffice(data)
-            if dump_dir:
-                Path(dump_dir, "converted.xlsx").write_bytes(xlsx_data)
-            print(f"DEBUG: converted.xlsx is {len(xlsx_data)} bytes, "
-                  f"starts with {xlsx_data[:4]!r} (zip magic is b'PK\\x03\\x04')", file=sys.stderr)
-            if xlsx_data[:2] == b"PK":
-                with zipfile.ZipFile(io.BytesIO(xlsx_data)) as zf:
-                    print(f"DEBUG: converted.xlsx zip contents: {zf.namelist()}", file=sys.stderr)
-                    for sheet_xml_name in ("xl/worksheets/sheet1.xml",):
-                        if sheet_xml_name in zf.namelist():
-                            raw_xml = zf.read(sheet_xml_name)
-                            text = raw_xml.decode("utf-8", errors="replace")
-                            print(f"DEBUG: {sheet_xml_name} is {len(raw_xml)} bytes", file=sys.stderr)
-                            row17_pos = text.find('r="17"')
-                            if row17_pos == -1:
-                                row17_pos = text.find("<row")
-                            start = max(0, row17_pos - 200)
-                            print(f"DEBUG: sheet1.xml around first <row>/r=\"17\" (pos {row17_pos}):\n"
-                                  f"{text[start:start + 4000]}", file=sys.stderr)
-                    if "xl/sharedStrings.xml" in zf.namelist():
-                        shared = zf.read("xl/sharedStrings.xml")
-                        print(f"DEBUG: sharedStrings.xml is {len(shared)} bytes; first 2000 chars:\n"
-                              f"{shared[:2000].decode('utf-8', errors='replace')}", file=sys.stderr)
-            excel_file = pd.ExcelFile(io.BytesIO(xlsx_data), engine="openpyxl")
-            print(f"DEBUG: converted.xlsx sheet_names: {excel_file.sheet_names}", file=sys.stderr)
-            for sheet in excel_file.sheet_names:
-                preview = excel_file.parse(sheet, header=None, nrows=5)
-                print(f"DEBUG: sheet {sheet!r} first rows:\n{preview.to_string()}", file=sys.stderr)
-            raw = excel_file.parse(excel_file.sheet_names[0], header=None)
+        except Exception:  # noqa: BLE001 - xlrd raises assorted error types for bad files
+            try:
+                raw = read_xls_via_olefile_bypass(data)
+            except Exception:  # noqa: BLE001 - fall through to the LibreOffice last resort
+                xlsx_data = convert_xls_to_xlsx_via_libreoffice(data)
+                if dump_dir:
+                    Path(dump_dir, "converted.xlsx").write_bytes(xlsx_data)
+                raw = pd.read_excel(io.BytesIO(xlsx_data), header=None, engine="openpyxl")
     else:
         raw = pd.read_excel(io.BytesIO(data), header=None)
     return _promote_header_row(raw)
