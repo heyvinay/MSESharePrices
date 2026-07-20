@@ -2,6 +2,30 @@
 
 Short ADR-style entries. Newest first.
 
+## 2026-07-20 — Route OLE2 .xls files through xlrd with ignore_workbook_corruption
+
+**Context:** First live GitHub Actions run against a real MSE archive URL
+(`https://cdn.borzamalta.com.mt/download/statistics/trading%20statistics%202026.xls`,
+surfaced during the original research in `docs/plan.md`) downloaded successfully
+(`Content-Type: application/vnd.ms-excel`, correct OLE2 magic bytes, 1,662,976
+bytes = exactly 406 × 4096) but `xlrd` raised `directory corruption: seen[0] == 2`
+while parsing it.
+
+**Decision:** This is a known xlrd strictness issue with compound-document
+directory chains in some real-world exported `.xls` files, not evidence the
+file itself is broken. `read_workbook()` now detects the OLE2 magic number and
+explicitly passes `engine="xlrd", engine_kwargs={"ignore_workbook_corruption": True}`
+for those files, leaving `.xlsx` (zip-based) files to pandas' normal engine
+auto-detection.
+
+**Consequence:** This also resolves (in principle, pending the next live run)
+the exact live-verification gap flagged in the entry below and in
+`docs/spec.md` — MSE's yearly archive is served as HTTP `application/vnd.ms-excel`
+with plausible page-discovery blocked (see `docs/architecture.md` § risks), so
+`--manual-url` / the workflow's `manual_urls` input remain the practical way to
+supply real archive URLs until `discover_urls()` is confirmed against the
+actual (likely JS-rendered) archive page markup.
+
 ## 2026-07-20 — Document the live-verification gap instead of guessing silently
 
 **Context:** Development sandbox network policy returns HTTP 403 for all requests to

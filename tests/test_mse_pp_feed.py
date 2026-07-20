@@ -152,6 +152,38 @@ def test_process_workbook_end_to_end():
     assert result.rows_dropped_invalid == 1
 
 
+# ---- read_workbook engine routing --------------------------------------------
+
+def test_read_workbook_routes_ole2_files_through_xlrd_with_corruption_tolerance(monkeypatch):
+    calls = []
+
+    def fake_read_excel(_buf, **kwargs):
+        calls.append(kwargs)
+        return pd.DataFrame()
+
+    monkeypatch.setattr(feed.pd, "read_excel", fake_read_excel)
+
+    ole2_bytes = feed.OLE2_MAGIC + b"\x00" * 24
+    feed.read_workbook(ole2_bytes)
+
+    assert calls == [{"engine": "xlrd", "engine_kwargs": {"ignore_workbook_corruption": True}}]
+
+
+def test_read_workbook_leaves_xlsx_files_to_default_pandas_detection(monkeypatch):
+    calls = []
+
+    def fake_read_excel(_buf, **kwargs):
+        calls.append(kwargs)
+        return pd.DataFrame()
+
+    monkeypatch.setattr(feed.pd, "read_excel", fake_read_excel)
+
+    zip_bytes = b"PK\x03\x04" + b"\x00" * 28
+    feed.read_workbook(zip_bytes)
+
+    assert calls == [{}]
+
+
 # ---- discover_urls -----------------------------------------------------------
 
 def test_discover_urls_extracts_and_resolves_xls_links():

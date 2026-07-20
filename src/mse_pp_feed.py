@@ -101,8 +101,23 @@ def download_file(url: str) -> bytes:
     return response.content
 
 
+OLE2_MAGIC = bytes.fromhex("d0cf11e0a1b11ae1")
+
+
 def read_workbook(data: bytes) -> pd.DataFrame:
-    """Parse workbook bytes (.xls or .xlsx) into a DataFrame of raw rows."""
+    """Parse workbook bytes (.xls or .xlsx) into a DataFrame of raw rows.
+
+    Legacy .xls (OLE2 compound-document) files exported by some reporting tools
+    are valid enough for Excel to open but trip xlrd's strict directory-chain
+    check ("directory corruption: seen[0] == 2"). Confirmed against a real MSE
+    archive file (Content-Type: application/vnd.ms-excel, correct OLE2 magic
+    bytes, clean sector-aligned size) -- not corruption, just xlrd being overly
+    strict. xlrd's ignore_workbook_corruption flag is the documented escape
+    hatch for exactly this.
+    """
+    if data[:8] == OLE2_MAGIC:
+        return pd.read_excel(io.BytesIO(data), engine="xlrd",
+                              engine_kwargs={"ignore_workbook_corruption": True})
     return pd.read_excel(io.BytesIO(data))
 
 
