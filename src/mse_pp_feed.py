@@ -18,7 +18,9 @@ import csv
 import io
 import json
 import re
+import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -31,6 +33,7 @@ ARCHIVE_PAGE_URL = "https://www.borzamalta.com.mt/publications-and-statistics?ca
 ARCHIVE_BASE_URL = "https://www.borzamalta.com.mt"
 USER_AGENT = "Mozilla/5.0 (compatible; MSESharePrices/1.0; +https://github.com/heyvinay/MSESharePrices)"
 REQUEST_TIMEOUT_SECONDS = 30
+LIBREOFFICE_TIMEOUT_SECONDS = 60
 
 # Recognised header aliases per canonical field. Header matching is case-insensitive
 # and ignores surrounding whitespace. Extend this list if a real MSE workbook uses a
@@ -104,20 +107,56 @@ def download_file(url: str) -> bytes:
 OLE2_MAGIC = bytes.fromhex("d0cf11e0a1b11ae1")
 
 
+class WorkbookConversionError(Exception):
+    """Raised when a legacy .xls file can't be parsed by xlrd or converted via LibreOffice."""
+
+
+def convert_xls_to_xlsx_via_libreoffice(data: bytes) -> bytes:
+    """Convert legacy .xls bytes to .xlsx bytes using headless LibreOffice.
+
+    Some real MSE workbooks are valid OLE2 compound documents that Excel and
+    LibreOffice open fine, but trip xlrd's directory-chain "seen" check in a
+    way xlrd's own ignore_workbook_corruption flag does not cover (that flag
+    only guards a different, unrelated code path -- see docs/decision-log.md,
+    2026-07-20 entry). LibreOffice's OLE2 parser is far more tolerant of
+    real-world exporter quirks, so this is used as a fallback, not the primary
+    path, to avoid the cost of shelling out for well-formed files.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        src = Path(tmpdir) / "workbook.xls"
+        src.write_bytes(data)
+        try:
+            subprocess.run(
+                ["soffice", "--headless", "--convert-to", "xlsx", "--outdir", tmpdir, str(src)],
+                check=True,
+                capture_output=True,
+                timeout=LIBREOFFICE_TIMEOUT_SECONDS,
+            )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as exc:
+            raise WorkbookConversionError(f"LibreOffice conversion failed: {exc}") from exc
+
+        converted = Path(tmpdir) / "workbook.xlsx"
+        if not converted.exists():
+            raise WorkbookConversionError("LibreOffice did not produce workbook.xlsx")
+        return converted.read_bytes()
+
+
 def read_workbook(data: bytes) -> pd.DataFrame:
     """Parse workbook bytes (.xls or .xlsx) into a DataFrame of raw rows.
 
-    Legacy .xls (OLE2 compound-document) files exported by some reporting tools
-    are valid enough for Excel to open but trip xlrd's strict directory-chain
-    check ("directory corruption: seen[0] == 2"). Confirmed against a real MSE
-    archive file (Content-Type: application/vnd.ms-excel, correct OLE2 magic
-    bytes, clean sector-aligned size) -- not corruption, just xlrd being overly
-    strict. xlrd's ignore_workbook_corruption flag is the documented escape
-    hatch for exactly this.
+    For legacy .xls (OLE2) files, tries xlrd first (fast, no subprocess), then
+    falls back to a LibreOffice-based conversion if xlrd rejects a file that is
+    nonetheless a genuine workbook (confirmed against a real MSE archive file:
+    Content-Type application/vnd.ms-excel, correct OLE2 magic bytes, clean
+    sector-aligned size -- xlrd was simply wrong to reject it).
     """
     if data[:8] == OLE2_MAGIC:
-        return pd.read_excel(io.BytesIO(data), engine="xlrd",
-                              engine_kwargs={"ignore_workbook_corruption": True})
+        try:
+            return pd.read_excel(io.BytesIO(data), engine="xlrd",
+                                  engine_kwargs={"ignore_workbook_corruption": True})
+        except Exception:  # noqa: BLE001 - xlrd raises assorted error types for bad files
+            xlsx_data = convert_xls_to_xlsx_via_libreoffice(data)
+            return pd.read_excel(io.BytesIO(xlsx_data), engine="openpyxl")
     return pd.read_excel(io.BytesIO(data))
 
 

@@ -31,6 +31,9 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Install LibreOffice (fallback .xls converter)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libreoffice-calc
+
       - name: Run tests
         run: pytest tests/
 

@@ -20,6 +20,9 @@ manually validated per `docs/spec.md`'s documented verification gap.
 | JSON schema | Output is a list of `{"date": ..., "close": ...}` objects; `close` is numeric (not a string); no extra keys. |
 | CSV schema (optional output) | Header is exactly `date,quote`; row count and ordering match the JSON output. |
 | End-to-end (fixture-based) | A small synthetic in-memory workbook (multiple symbols, one duplicate date, one invalid row) produces the exact expected JSON. |
+| xlrd engine routing | OLE2 (`.xls`) files are routed through `xlrd`; zip (`.xlsx`) files go through pandas' default engine detection. |
+| LibreOffice fallback routing | When `xlrd` raises on an OLE2 file, `read_workbook()` falls back to `convert_xls_to_xlsx_via_libreoffice()` + `openpyxl` (mocked in the unit test; see the real-`soffice` integration test below for the unmocked path). |
+| LibreOffice conversion (real, not mocked) | `test_convert_xls_to_xlsx_via_libreoffice_real_roundtrip` exercises the actual `soffice` binary end-to-end. It **skips** (not fails) if headless conversion doesn't work in the current environment — this development sandbox's LibreOffice can't complete *any* headless conversion, even a trivial `.txt`→`.pdf`, which is an environment restriction, not a code bug. GitHub Actions' `ubuntu-latest` runner (where `libreoffice-calc` is installed by the workflow) is the environment that actually matters; the live workflow run is the real confirmation this path works (see `docs/decision-log.md`, 2026-07-20 LibreOffice entry). |
 
 ## CI
 

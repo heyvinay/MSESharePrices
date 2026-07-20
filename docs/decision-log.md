@@ -2,7 +2,34 @@
 
 Short ADR-style entries. Newest first.
 
-## 2026-07-20 — Route OLE2 .xls files through xlrd with ignore_workbook_corruption
+## 2026-07-20 — Fall back to LibreOffice when xlrd rejects a genuine .xls file
+
+**Context:** The `ignore_workbook_corruption` fix (below) did not resolve the
+real failure — reading xlrd's own source (`compdoc.py`) showed that flag only
+guards a check in `_locate_stream`, not the `_get_stream` directory-chain check
+that MSE's real file actually trips (`directory corruption: seen[0] == 2`).
+There is no xlrd-level escape hatch for this specific check; it's a hard
+limitation of xlrd's compound-document parser, which is unmaintained.
+
+**Decision:** Try xlrd first (fast, no subprocess) for OLE2 files; if it raises
+any exception, fall back to converting the file to `.xlsx` via headless
+LibreOffice (`soffice --headless --convert-to xlsx`) and reading that with
+openpyxl instead. LibreOffice's own OLE2 parser is materially more tolerant of
+real-world exporter quirks. The GitHub Actions workflow now installs
+`libreoffice-calc` via apt before running the script.
+
+**Consequence:** Adds a system-level dependency (LibreOffice) and a subprocess
+call, only exercised as a fallback (well-formed files never pay this cost).
+`soffice` can exit 0 while still failing to convert ("source file could not be
+loaded" printed to stdout) — `convert_xls_to_xlsx_via_libreoffice()` explicitly
+checks the expected output file exists rather than trusting the exit code
+alone. The real end-to-end LibreOffice conversion path could not be verified
+in the development sandbox (headless `soffice` fails there entirely, even for
+a trivial .txt→.pdf conversion — an environment restriction, not a code bug);
+it is verified against GitHub Actions' standard ubuntu-latest runner instead
+(see `docs/qa.md`).
+
+## 2026-07-20 — Route OLE2 .xls files through xlrd with ignore_workbook_corruption (superseded)
 
 **Context:** First live GitHub Actions run against a real MSE archive URL
 (`https://cdn.borzamalta.com.mt/download/statistics/trading%20statistics%202026.xls`,
@@ -18,13 +45,12 @@ explicitly passes `engine="xlrd", engine_kwargs={"ignore_workbook_corruption": T
 for those files, leaving `.xlsx` (zip-based) files to pandas' normal engine
 auto-detection.
 
-**Consequence:** This also resolves (in principle, pending the next live run)
-the exact live-verification gap flagged in the entry below and in
-`docs/spec.md` — MSE's yearly archive is served as HTTP `application/vnd.ms-excel`
-with plausible page-discovery blocked (see `docs/architecture.md` § risks), so
-`--manual-url` / the workflow's `manual_urls` input remain the practical way to
-supply real archive URLs until `discover_urls()` is confirmed against the
-actual (likely JS-rendered) archive page markup.
+**Consequence:** Superseded the same day by the entry above — a second live run
+showed this specific error is not covered by `ignore_workbook_corruption` at
+all (see above). Left in the log for the record of what was tried and why it
+didn't fully work; the code still attempts this fast path first before falling
+back to LibreOffice, since it does help for the corruption classes it actually
+guards.
 
 ## 2026-07-20 — Document the live-verification gap instead of guessing silently
 
