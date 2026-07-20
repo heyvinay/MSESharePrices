@@ -54,7 +54,20 @@ Pages and refreshed automatically.
 ## Known limitation (documented, not hidden)
 
 MSE's site returned HTTP 403 to automated requests from the development sandbox used to build this
-project, so the yearly-archive HTML structure and exact workbook column names could not be verified live
-during development. The parser is built to tolerate several plausible header spellings and to fail loudly
-(rather than silently) if none match — see `docs/architecture.md` § Risks and `docs/qa.md`. Verify against
-a real downloaded workbook (or via `--manual-url`) before relying on unattended daily runs.
+project, so the yearly-archive HTML structure could not be verified live during development, and
+`discover_urls()` finds zero downloadable links when GitHub Actions fetches the archive page (the page is
+likely JS-rendered) — see `docs/architecture.md` § Risks.
+
+**The parsing pipeline itself has been validated against a real MSE file** (`Daily_Market_Extract.xls`,
+via GitHub Actions, which has normal internet access unlike the dev sandbox): the OLE2/xlrd routing, the
+LibreOffice fallback for files xlrd can't parse, and header-row scanning all worked correctly and produced
+genuinely readable MSE content. What's still unresolved is that the two candidate yearly-archive URLs
+tried (`trading statistics 2025.xls` and `trading statistics 2026.xls`, both surfaced by AI research in
+`docs/plan.md` and never confirmed by a human) consistently return garbled, content-free responses for
+both years — most likely wrong/stale URLs, not a defect in this project. See `docs/qa.md`'s "Finding"
+section and `docs/decision-log.md` for the full investigation.
+
+**Before relying on unattended daily runs:** a human must browse
+`https://www.borzamalta.com.mt/publications-and-statistics?category=33` directly, obtain a real, working
+yearly-archive download URL, and confirm it via `--manual-url` (or the workflow's `manual_urls` dispatch
+input) produces a sane `docs/json/BOV.json`.

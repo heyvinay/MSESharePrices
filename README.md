@@ -92,16 +92,26 @@ On the security's **Historical Quotes** tab:
 ## Known limitations
 
 - **MSE data is end-of-day only.** This is not, and cannot be, a real-time feed.
-- **Live-verification gap:** during development, `borzamalta.com.mt` returned HTTP 403 to automated
-  requests from the sandbox this project was built in, so the exact archive page HTML and workbook column
-  names could not be confirmed against a real live sample. The parser (`normalise_headers` in
-  `src/mse_pp_feed.py`) accepts several plausible header spellings and fails with a clear, named error if
-  none match — but **run it once against a real downloaded workbook (via `--manual-url`) before trusting
-  the scheduled Action**, and see [`docs/qa.md`](docs/qa.md)'s manual verification checklist.
-- **Archive page structure may change** — `discover_urls()` is coupled to today's page markup;
-  `--manual-url` is the documented fallback.
+- **The parsing pipeline is validated against a real MSE file, but the default archive URL is not yet
+  correct.** Legacy `.xls` files from MSE can trip `xlrd`'s strict parser (`directory corruption` errors);
+  `read_workbook()` falls back to converting via headless LibreOffice, then scans for the real header row
+  (MSE exports have a banner row above it). This was confirmed working end-to-end against a real file,
+  `Daily_Market_Extract.xls` — GitHub Actions correctly extracted genuine, readable MSE content from it.
+  However, the yearly-archive URLs guessed from AI research in [`docs/plan.md`](docs/plan.md)
+  (`trading statistics 2025.xls` and `2026.xls`) both return garbled, content-free data — very likely wrong
+  or stale URLs, not a defect in this project. **A human needs to browse
+  `https://www.borzamalta.com.mt/publications-and-statistics?category=33` directly to get a real working
+  URL** and pass it via `--manual-url` (or the workflow's `manual_urls` dispatch input) before trusting the
+  scheduled Action. See [`docs/qa.md`](docs/qa.md)'s "Finding" section and
+  [`docs/decision-log.md`](docs/decision-log.md) for the full investigation.
+- **Archive page structure may change / can't be scraped from this environment** —
+  `discover_urls()` found zero downloadable links when fetched from GitHub Actions (the page is likely
+  JS-rendered); `--manual-url` is the documented fallback and, for now, the only proven path to data.
 - Only closing price is captured (no open/high/low/volume) — that's all Portfolio Performance's JSON
   historical-quote provider needs.
+- Requires a system-level LibreOffice install (`libreoffice-calc`, added via apt in the workflow) as a
+  fallback `.xls` converter — this adds install time to each scheduled run but only the LibreOffice
+  conversion step itself runs conditionally, only for files `xlrd` rejects.
 
 ## Troubleshooting
 

@@ -2,6 +2,47 @@
 
 Short ADR-style entries. Newest first.
 
+## 2026-07-20 — Conclusion: the guessed archive URLs are likely wrong, not a parsing bug
+
+**Context:** After confirming the OLE2/xlrd routing, the LibreOffice fallback, and
+header-row scanning all work correctly, `trading statistics 2026.xls` still
+produced only garbled OLE2-internal text (`Root Entry`/`Workbook`/
+`SummaryInformation`/`MsoDataStore`) with zero real content anywhere in the
+first 15 rows. Two differential tests were run to isolate the cause:
+
+1. **`trading statistics 2025.xls`** (a fully-closed prior year, ruling out
+   "2026 is still being written"): same 100% garbage, zero real content.
+2. **`Daily_Market_Extract.xls`** (a different real MSE file): rows 0-5 show
+   the same OLE2 garbage, but **rows 6-14 contain genuine, readable MSE
+   content** — real company names and prices (`BMIT Technologies p.l.c. Ord
+   € 0.10`, `Harvest Technology p.l.c. Ord € 0.50`, `RS2 plc Pref € 0.06`,
+   `LifeStar Insurance p.l.c.`, `APS Bank plc Ordinary Shares € 0.25`, `MIDI
+   plc Secured €... 2026`, etc.) — it's an "Official List" narrative document
+   (security names + ex-dividend dates), not a Symbol/Date/Close price table,
+   but it proves the full pipeline (download → OLE2 detection → LibreOffice
+   conversion → row scanning) genuinely works end-to-end against a real file.
+
+**Decision:** The pipeline is not the problem. The two `trading statistics
+YYYY.xls` URLs — surfaced by AI web research in `docs/plan.md`, never
+confirmed by a human actually clicking through MSE's site — are almost
+certainly wrong or stale for **both** tested years, which rules out "current
+year not finalized" as an explanation (a genuinely wrong/dead URL would
+plausibly serve the same placeholder/generic OLE2 document regardless of the
+year in the filename). Continuing to guess more candidate URLs blindly was not
+productive and this was stopped in favour of documenting the finding clearly.
+
+**Consequence:** Getting real historical daily-close data requires a
+human-confirmed download URL from MSE's actual archive page
+(https://www.borzamalta.com.mt/publications-and-statistics?category=33),
+which this sandbox and the GitHub Actions runner's automated request to that
+HTML page could not extract (see the discover_urls entry in
+`docs/architecture.md` § risks — the page returns zero `<a href>` `.xls`
+links to an automated fetch, consistent with a JS-rendered page). The
+`--manual-url` CLI flag and the workflow's `manual_urls` dispatch input exist
+specifically for this: once a human obtains the correct URL by browsing the
+archive page directly, the exact same pipeline validated in this session
+should work against it unchanged.
+
 ## 2026-07-20 — Remove ignore_workbook_corruption: it caused silent data corruption
 
 **Context:** After the header-row-scan fix (below), the live workflow still
